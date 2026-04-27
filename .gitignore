@@ -1,6 +1,7 @@
 # macOS / editor artifacts
 .DS_Store
 .ipynb_checkpoints/
+.matplotlib_cache/
 
 # Python caches
 __pycache__/

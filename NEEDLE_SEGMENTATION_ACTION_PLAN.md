@@ -98,11 +98,39 @@ project/
 
 ## 3. Metric Strategy
 
-The competition metric combines DICE coefficient and sensitivity. The exact weighting should be copied from the Kaggle evaluation instructions or the provided evaluation image before final tuning.
+The uploaded Kaggle evaluation criteria define a composite metric that combines DICE coefficient and sensitivity:
+
+```text
+Score = alpha * DICE + (1 - alpha) * Sensitivity
+```
+
+The competition does not disclose `alpha`, so local validation should not optimize only one assumed score. Instead, every experiment should report DICE, sensitivity, and composite scores for multiple plausible alpha values.
 
 > **Metric Strategy**
 >
-> DICE rewards overlap quality and penalizes both false positives and false negatives. Sensitivity rewards finding as much of the needle as possible. Because the needle is thin and sparse, the model should be tuned to avoid missing needle pixels, but not by producing broad masks that destroy DICE. The validation loop must tune the probability threshold and post-processing settings against the final combined metric, not only against training loss.
+> DICE rewards overlap quality and penalizes both false positives and false negatives. Sensitivity rewards finding as much of the needle as possible. Because the needle is thin and sparse, the model should be tuned to avoid missing needle pixels, but not by producing broad masks that destroy DICE. Since `alpha` is hidden, threshold and post-processing choices should be robust across sensitivity-heavy, balanced, and DICE-heavy scoring assumptions.
+
+Evaluation definitions from the project criteria:
+
+```text
+DICE = (2 * |X intersection Y| + epsilon) / (|X| + |Y| + epsilon)
+
+Sensitivity = (|X intersection Y| + epsilon) / (|Y| + epsilon)
+```
+
+where:
+
+- `X` is the set of positive pixels in the predicted mask.
+- `Y` is the set of positive pixels in the ground-truth mask.
+- `epsilon` is a small constant used to avoid division by zero.
+- For empty ground-truth masks, sensitivity is treated as perfect only when the prediction is also empty; non-empty predictions on empty ground truth should be penalized.
+
+Recommended local reporting:
+
+- `alpha = 0.25`: sensitivity-heavy score
+- `alpha = 0.50`: balanced score
+- `alpha = 0.75`: DICE-heavy score
+- final model selection should favor methods that perform well across all three
 
 Definitions:
 
@@ -141,22 +169,36 @@ def sensitivity_score(pred_mask, true_mask, eps=1e-7):
     return (true_positive + eps) / (true_positive + false_negative + eps)
 
 
-def competition_metric(pred_mask, true_mask):
-    """Placeholder for exact Kaggle metric.
+def competition_metric(pred_mask, true_mask, alpha=0.5):
+    """Compute the project composite metric for an assumed alpha.
 
-    Replace this formula with the exact weighting from the project evaluation
-    criteria if the competition uses a non-50/50 blend.
+    Kaggle does not disclose alpha, so validation should report multiple
+    alpha values instead of relying only on alpha=0.5.
     """
     dice = dice_score(pred_mask, true_mask)
     sensitivity = sensitivity_score(pred_mask, true_mask)
-    return 0.5 * dice + 0.5 * sensitivity
+    return alpha * dice + (1.0 - alpha) * sensitivity
+
+
+def metric_report(pred_mask, true_mask):
+    dice = dice_score(pred_mask, true_mask)
+    sensitivity = sensitivity_score(pred_mask, true_mask)
+    return {
+        "dice": dice,
+        "sensitivity": sensitivity,
+        "score_alpha_025": competition_metric(pred_mask, true_mask, alpha=0.25),
+        "score_alpha_050": competition_metric(pred_mask, true_mask, alpha=0.50),
+        "score_alpha_075": competition_metric(pred_mask, true_mask, alpha=0.75),
+    }
 ```
 
 Validation should report:
 
 - mean DICE
 - mean sensitivity
-- mean combined competition proxy score
+- mean composite score for `alpha = 0.25`
+- mean composite score for `alpha = 0.50`
+- mean composite score for `alpha = 0.75`
 - score on positive-mask images only
 - score on empty-mask images only
 - number of all-empty predictions
@@ -844,7 +886,8 @@ Acceptance criteria:
 
 Goals:
 
-- build a simple threshold / morphology / Hough-line baseline
+- build a simple threshold / morphology baseline in `baseline_model`
+- build a second candidate baseline using Canny edges plus probabilistic Hough-line detection
 - establish a minimum score for comparison
 - understand whether the needle is consistently brighter or line-like
 
@@ -852,12 +895,34 @@ Deliverables:
 
 - baseline validation DICE
 - baseline validation sensitivity
+- composite validation scores for `alpha = 0.25`, `0.50`, and `0.75`
 - qualitative overlay grid
+- optional binary test-mask export for the best classical baseline
 
 Acceptance criteria:
 
 - baseline produces non-empty masks on at least some positive validation images
 - baseline exposes common false-positive structures
+- validation metrics are written to `outputs/baseline_model/{method}/validation_metrics.csv`
+- generated masks are binary `0/255` PNGs when using prediction mode
+
+Current baseline scripts:
+
+```text
+baseline_model/
+├── algorithms.py        # percentile, Otsu, and Hough-line segmentation
+├── data_io.py           # data-root discovery, image loading, mask export
+├── metrics.py           # DICE, sensitivity, hidden-alpha composite scores
+├── run_baselines.py     # CLI for validation and test-mask export
+└── README.md
+```
+
+Baseline validation commands:
+
+```bash
+.venv/bin/python -m baseline_model.run_baselines --mode validate --method percentile
+.venv/bin/python -m baseline_model.run_baselines --mode validate --method hough
+```
 
 ### Phase 3: U-Net Baseline
 
