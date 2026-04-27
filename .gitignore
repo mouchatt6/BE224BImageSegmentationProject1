@@ -1,0 +1,36 @@
+# macOS / editor artifacts
+.DS_Store
+.ipynb_checkpoints/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Large image datasets: keep these local, do not upload to GitHub
+trainImages/
+trainMasks/
+testImages/
+**/trainImages/
+**/trainMasks/
+**/testImages/
+*.jpg
+*.jpeg
+*.png
+*.tif
+*.tiff
+*.bmp
+
+# Generated training artifacts
+outputs/
+checkpoints/
+runs/
+wandb/
+*.pt
+*.pth
+*.ckpt
