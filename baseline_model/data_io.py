@@ -55,9 +55,17 @@ def build_file_index(paths: list[Path], id_parser) -> dict[str, Path]:
     return index
 
 
-def load_dataset(repo_root: Path) -> tuple[Path, pd.DataFrame, dict[str, Path], dict[str, Path], dict[str, Path]]:
+def load_dataset(
+    repo_root: Path,
+    data_root: Path | None = None,
+) -> tuple[Path, pd.DataFrame, dict[str, Path], dict[str, Path], dict[str, Path]]:
     repo_root = Path(repo_root).resolve()
-    data_root = find_data_root(repo_root)
+    data_root = Path(data_root).resolve() if data_root is not None else find_data_root(repo_root)
+
+    if not all((data_root / folder).exists() for folder in ("trainImages", "trainMasks", "testImages")):
+        raise FileNotFoundError(
+            f"Data root does not contain trainImages/trainMasks/testImages: {data_root}"
+        )
 
     train_csv = repo_root / "trainSet.csv"
     if not train_csv.exists():
@@ -98,4 +106,3 @@ def save_binary_png(path: Path, mask: np.ndarray) -> None:
     ok = cv2.imwrite(str(path), png_mask)
     if not ok:
         raise OSError(f"Failed to write mask: {path}")
-

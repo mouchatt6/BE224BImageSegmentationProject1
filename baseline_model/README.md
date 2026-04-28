@@ -24,6 +24,35 @@ or run commands directly with:
 .venv/bin/python
 ```
 
+The runner now infers the repo root from the script location, not from the shell's current working directory. That means these commands work from the repo root and also when launched from inside `baseline_model`.
+
+Expected local layout:
+
+```text
+Bioengr 224B Spring 26 Project 1/
+├── trainImages/
+├── trainMasks/
+├── testImages/
+└── BE224BImageSegmentationProject1/
+    ├── trainSet.csv
+    └── baseline_model/
+```
+
+If your data folders are somewhere else, pass them explicitly:
+
+```bash
+.venv/bin/python -m baseline_model.run_baselines \
+  --data-root "/path/to/folder/with/trainImages/trainMasks/testImages" \
+  --mode validate \
+  --method percentile
+```
+
+Check the baseline environment and detected paths:
+
+```bash
+.venv/bin/python -m baseline_model.check_environment
+```
+
 ## Validate A Baseline
 
 From the repo root:
@@ -34,6 +63,12 @@ From the repo root:
 
 ```bash
 .venv/bin/python -m baseline_model.run_baselines --mode validate --method hough
+```
+
+From inside `baseline_model`, use:
+
+```bash
+../.venv/bin/python run_baselines.py --mode validate --method percentile
 ```
 
 Outputs are written under:
@@ -71,4 +106,3 @@ outputs/baseline_model/percentile/test_masks/
 ```
 
 These files are for local experimentation and are ignored by Git.
-

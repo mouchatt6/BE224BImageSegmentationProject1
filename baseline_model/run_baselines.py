@@ -24,7 +24,18 @@ except ImportError:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run classical needle segmentation baselines.")
-    parser.add_argument("--repo-root", type=Path, default=Path.cwd(), help="Path to the Git repo root.")
+    parser.add_argument(
+        "--repo-root",
+        type=Path,
+        default=None,
+        help="Path to the Git repo root. Defaults to the parent of baseline_model.",
+    )
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        default=None,
+        help="Folder containing trainImages, trainMasks, and testImages. Defaults to auto-detection.",
+    )
     parser.add_argument(
         "--mode",
         choices=("validate", "predict-test"),
@@ -57,6 +68,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--high-intensity-percentile", type=float, default=97.0)
 
     return parser
+
+
+def infer_repo_root() -> Path:
+    """Return the Git repo root based on this file location, not the shell cwd."""
+    return Path(__file__).resolve().parents[1]
+
+
+def resolve_output_dir(repo_root: Path, output_dir: Path) -> Path:
+    output_dir = Path(output_dir)
+    if output_dir.is_absolute():
+        return output_dir
+    return repo_root / output_dir
 
 
 def segment_image(image: np.ndarray, args: argparse.Namespace) -> np.ndarray:
@@ -118,7 +141,7 @@ def write_csv(path: Path, rows: list[dict]) -> None:
 
 
 def run_validation(args: argparse.Namespace) -> None:
-    data_root, train_df, train_images, train_masks, _ = load_dataset(args.repo_root)
+    data_root, train_df, train_images, train_masks, _ = load_dataset(args.repo_root, data_root=args.data_root)
 
     _, valid_df = train_test_split(
         train_df,
@@ -145,7 +168,7 @@ def run_validation(args: argparse.Namespace) -> None:
     if not rows:
         raise RuntimeError("No validation rows were evaluated.")
 
-    output_dir = args.repo_root / args.output_dir / args.method
+    output_dir = resolve_output_dir(args.repo_root, args.output_dir) / args.method
     write_csv(output_dir / "validation_metrics.csv", rows)
     summary = summarize_metric_rows(rows)
     write_csv(output_dir / "validation_summary.csv", [summary])
@@ -159,8 +182,8 @@ def run_validation(args: argparse.Namespace) -> None:
 
 
 def run_test_prediction(args: argparse.Namespace) -> None:
-    data_root, _, _, _, test_images = load_dataset(args.repo_root)
-    output_dir = args.repo_root / args.output_dir / args.method / "test_masks"
+    data_root, _, _, _, test_images = load_dataset(args.repo_root, data_root=args.data_root)
+    output_dir = resolve_output_dir(args.repo_root, args.output_dir) / args.method / "test_masks"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for image_id, image_path in sorted(test_images.items(), key=lambda item: int(item[0]) if item[0].isdigit() else item[0]):
@@ -176,7 +199,8 @@ def run_test_prediction(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    args.repo_root = args.repo_root.resolve()
+    args.repo_root = (args.repo_root if args.repo_root is not None else infer_repo_root()).resolve()
+    args.data_root = args.data_root.resolve() if args.data_root is not None else None
 
     if args.mode == "validate":
         run_validation(args)
@@ -186,4 +210,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
