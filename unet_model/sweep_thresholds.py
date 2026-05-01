@@ -30,11 +30,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--thresholds",
         type=float,
         nargs="+",
-        default=[0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80],
+        default=[
+            0.250,
+            0.275,
+            0.300,
+            0.325,
+            0.350,
+            0.375,
+            0.400,
+            0.425,
+            0.450,
+            0.475,
+            0.500,
+            0.525,
+            0.550,
+            0.575,
+            0.600,
+            0.625,
+            0.650,
+            0.675,
+            0.700,
+        ],
     )
-    parser.add_argument("--min-areas", type=int, nargs="+", default=[1, 3, 5, 10, 20])
-    parser.add_argument("--close-kernel-sizes", type=int, nargs="+", default=[0, 3, 5])
-    parser.add_argument("--dilation-iterations", type=int, nargs="+", default=[0, 1])
+    parser.add_argument("--min-areas", type=int, nargs="+", default=[3, 5, 10, 20, 40, 80, 120])
+    parser.add_argument("--close-kernel-sizes", type=int, nargs="+", default=[0, 3, 5, 7])
+    parser.add_argument("--dilation-iterations", type=int, nargs="+", default=[0])
     parser.add_argument("--keep-single-component", action="store_true", default=True)
     parser.add_argument("--keep-all-components", action="store_false", dest="keep_single_component")
     parser.add_argument("--limit-valid-batches", type=int, default=None)
@@ -217,4 +237,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

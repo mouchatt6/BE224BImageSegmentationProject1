@@ -28,7 +28,8 @@ Run a quick two-batch pass before a longer training run:
   --epochs 30 \
   --batch-size 4 \
   --base-channels 32 \
-  --lr 0.001
+  --lr 0.001 \
+  --loss bce_dice_tversky
 ```
 
 Outputs:
@@ -39,6 +40,13 @@ outputs/unet_model/training_history.csv
 ```
 
 The model selection score is the balanced `alpha = 0.50` validation score, while the history also records `alpha = 0.25` and `alpha = 0.75`.
+
+Loss options:
+
+- `bce_dice_tversky`: default; balances calibration, overlap, and false-negative control.
+- `bce_dice`: original baseline loss.
+- `dice_tversky`: stronger foreground-overlap loss when BCE is over-penalizing sparse masks.
+- `focal_tversky`: useful if false positives from easy background pixels dominate training.
 
 ## Export Test Masks
 
@@ -65,6 +73,34 @@ python -m unet_model.sweep_thresholds \
 The CSV is ranked by `score_alpha_050` and also reports `score_alpha_025` and `score_alpha_075`.
 Use the top validation configurations to choose one or two daily Kaggle submissions.
 
+## Min Area Sweep
+
+Run this after choosing a reasonable threshold:
+
+```bash
+python -m unet_model.sweep_min_area \
+  --data-root /kaggle/input/YOUR_DATASET_FOLDER \
+  --checkpoint outputs/unet_model/best_unet.pt \
+  --threshold 0.40 \
+  --close-kernel-size 3 \
+  --dilation-iterations 0 \
+  --output-csv outputs/unet_model/min_area_sweep.csv
+```
+
+## Closing Kernel Size Sweep
+
+Run this after choosing a reasonable threshold and `min_area`:
+
+```bash
+python -m unet_model.sweep_close_kernel_size \
+  --data-root /kaggle/input/YOUR_DATASET_FOLDER \
+  --checkpoint outputs/unet_model/best_unet.pt \
+  --threshold 0.40 \
+  --min-area 40 \
+  --dilation-iterations 0 \
+  --output-csv outputs/unet_model/close_kernel_size_sweep.csv
+```
+
 Example export using a selected configuration:
 
 ```bash
@@ -72,8 +108,8 @@ python -m unet_model.predict_unet \
   --data-root /kaggle/input/YOUR_DATASET_FOLDER \
   --checkpoint outputs/unet_model/best_unet.pt \
   --output-dir outputs/unet_model/test_masks_t030 \
-  --threshold 0.30 \
-  --min-area 3 \
+  --threshold 0.40 \
+  --min-area 40 \
   --close-kernel-size 3 \
-  --dilation-iterations 1
+  --dilation-iterations 0
 ```

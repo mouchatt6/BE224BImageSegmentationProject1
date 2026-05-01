@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from .dataset import NeedleDataset, infer_repo_root, load_training_index
-from .losses import BCEDiceLoss, batch_dice, batch_sensitivity, composite_score
+from .losses import batch_dice, batch_sensitivity, build_loss, composite_score
 from .model import build_unet
 
 
@@ -28,6 +28,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--base-channels", type=int, default=32)
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--loss",
+        choices=["bce_dice", "dice_tversky", "bce_dice_tversky", "focal_tversky"],
+        default="bce_dice_tversky",
+        help="Training loss to optimize. Use bce_dice to reproduce the original run.",
+    )
+    parser.add_argument("--bce-weight", type=float, default=0.4)
+    parser.add_argument("--dice-weight", type=float, default=0.4)
+    parser.add_argument("--tversky-weight", type=float, default=0.2)
+    parser.add_argument("--focal-weight", type=float, default=0.0)
+    parser.add_argument("--tversky-fp-weight", type=float, default=0.3)
+    parser.add_argument("--tversky-fn-weight", type=float, default=0.7)
+    parser.add_argument("--focal-alpha", type=float, default=0.25)
+    parser.add_argument("--focal-gamma", type=float, default=2.0)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--limit-train-batches", type=int, default=None)
     parser.add_argument("--limit-valid-batches", type=int, default=None)
@@ -148,7 +162,17 @@ def main() -> None:
     valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     model = build_unet(base_channels=args.base_channels).to(device)
-    criterion = BCEDiceLoss()
+    criterion = build_loss(
+        args.loss,
+        bce_weight=args.bce_weight,
+        dice_weight=args.dice_weight,
+        tversky_weight=args.tversky_weight,
+        focal_weight=args.focal_weight,
+        tversky_fp_weight=args.tversky_fp_weight,
+        tversky_fn_weight=args.tversky_fn_weight,
+        focal_alpha=args.focal_alpha,
+        focal_gamma=args.focal_gamma,
+    )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=5)
 
@@ -157,6 +181,7 @@ def main() -> None:
     print(f"Output dir: {output_dir}")
     print(f"Device: {device}")
     print(f"Train images: {len(train_dataset)} | Valid images: {len(valid_dataset)}")
+    print(f"Loss: {args.loss}")
 
     best_score = -1.0
     history = []
@@ -214,4 +239,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
