@@ -42,6 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--focal-alpha", type=float, default=0.25)
     parser.add_argument("--focal-gamma", type=float, default=2.0)
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--skip-batch-checks", action="store_true", help="Disable CPU-side image/mask validation checks.")
     parser.add_argument("--limit-train-batches", type=int, default=None)
     parser.add_argument("--limit-valid-batches", type=int, default=None)
     return parser
@@ -93,6 +94,7 @@ def main() -> None:
     print(f"Train images: {len(train_dataset)} | Valid images: {len(valid_dataset)}")
     print(f"Model: U-Net++ | base_channels={args.base_channels} | deep_supervision={args.deep_supervision}")
     print(f"Loss: {args.loss}")
+    print(f"Batch checks: {not args.skip_batch_checks}")
 
     best_score = -1.0
     history = []
@@ -105,6 +107,7 @@ def main() -> None:
             criterion,
             device,
             limit_batches=args.limit_train_batches,
+            validate_batches=not args.skip_batch_checks,
         )
         metrics = validate(
             model,
@@ -113,6 +116,7 @@ def main() -> None:
             device,
             threshold=args.threshold,
             limit_batches=args.limit_valid_batches,
+            validate_batches=not args.skip_batch_checks,
         )
         scheduler.step(metrics["score_alpha_050"])
 
@@ -151,4 +155,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

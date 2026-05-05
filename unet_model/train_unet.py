@@ -43,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--focal-alpha", type=float, default=0.25)
     parser.add_argument("--focal-gamma", type=float, default=2.0)
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--skip-batch-checks", action="store_true", help="Disable CPU-side image/mask validation checks.")
     parser.add_argument("--limit-train-batches", type=int, default=None)
     parser.add_argument("--limit-valid-batches", type=int, default=None)
     return parser
@@ -60,18 +61,50 @@ def resolve_output_dir(repo_root: Path, output_dir: Path) -> Path:
     return output_dir if output_dir.is_absolute() else repo_root / output_dir
 
 
-def train_one_epoch(model, loader, optimizer, criterion, device, limit_batches=None) -> float:
+def validate_batch_tensors(batch: dict, batch_idx: int, phase: str) -> None:
+    images = batch["image"]
+    masks = batch.get("mask")
+
+    if not torch.isfinite(images).all():
+        raise ValueError(f"{phase} batch {batch_idx} contains NaN or infinite image values.")
+
+    if masks is None:
+        return
+
+    if not torch.isfinite(masks).all():
+        raise ValueError(f"{phase} batch {batch_idx} contains NaN or infinite mask values.")
+
+    mask_min = float(masks.min())
+    mask_max = float(masks.max())
+    if mask_min < 0.0 or mask_max > 1.0:
+        raise ValueError(
+            f"{phase} batch {batch_idx} has mask values outside [0, 1]: "
+            f"min={mask_min:.6f}, max={mask_max:.6f}. Check mask loading/binarization."
+        )
+
+
+def assert_finite_tensor(tensor: torch.Tensor, name: str) -> None:
+    if not torch.isfinite(tensor).all():
+        raise RuntimeError(f"{name} contains NaN or infinite values.")
+
+
+def train_one_epoch(model, loader, optimizer, criterion, device, limit_batches=None, validate_batches=True) -> float:
     model.train()
     total_loss = 0.0
     total_seen = 0
 
     for batch_idx, batch in enumerate(tqdm(loader, desc="train", leave=False), start=1):
+        if validate_batches:
+            validate_batch_tensors(batch, batch_idx, "train")
+
         images = batch["image"].to(device)
         masks = batch["mask"].to(device)
 
         optimizer.zero_grad(set_to_none=True)
         logits = model(images)
+        assert_finite_tensor(logits, f"train batch {batch_idx} logits")
         loss = criterion(logits, masks)
+        assert_finite_tensor(loss, f"train batch {batch_idx} loss")
         loss.backward()
         optimizer.step()
 
@@ -85,7 +118,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device, limit_batches=N
 
 
 @torch.no_grad()
-def validate(model, loader, criterion, device, threshold: float, limit_batches=None) -> dict[str, float]:
+def validate(model, loader, criterion, device, threshold: float, limit_batches=None, validate_batches=True) -> dict[str, float]:
     model.eval()
     total_loss = 0.0
     total_seen = 0
@@ -95,10 +128,15 @@ def validate(model, loader, criterion, device, threshold: float, limit_batches=N
     true_pixels = []
 
     for batch_idx, batch in enumerate(tqdm(loader, desc="valid", leave=False), start=1):
+        if validate_batches:
+            validate_batch_tensors(batch, batch_idx, "valid")
+
         images = batch["image"].to(device)
         masks = batch["mask"].to(device)
         logits = model(images)
+        assert_finite_tensor(logits, f"valid batch {batch_idx} logits")
         loss = criterion(logits, masks)
+        assert_finite_tensor(loss, f"valid batch {batch_idx} loss")
         probs = torch.sigmoid(logits)
         preds = (probs >= threshold).float()
 
@@ -182,6 +220,7 @@ def main() -> None:
     print(f"Device: {device}")
     print(f"Train images: {len(train_dataset)} | Valid images: {len(valid_dataset)}")
     print(f"Loss: {args.loss}")
+    print(f"Batch checks: {not args.skip_batch_checks}")
 
     best_score = -1.0
     history = []
@@ -194,6 +233,7 @@ def main() -> None:
             criterion,
             device,
             limit_batches=args.limit_train_batches,
+            validate_batches=not args.skip_batch_checks,
         )
         metrics = validate(
             model,
@@ -202,6 +242,7 @@ def main() -> None:
             device,
             threshold=args.threshold,
             limit_batches=args.limit_valid_batches,
+            validate_batches=not args.skip_batch_checks,
         )
         scheduler.step(metrics["score_alpha_050"])
 

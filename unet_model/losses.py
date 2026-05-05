@@ -4,12 +4,20 @@ import torch
 from torch import nn
 
 
+def prepare_binary_targets(targets: torch.Tensor) -> torch.Tensor:
+    targets = targets.float()
+    if not torch.isfinite(targets).all():
+        raise ValueError("Segmentation targets contain NaN or infinite values.")
+    return targets.clamp(0.0, 1.0)
+
+
 class DiceLoss(nn.Module):
     def __init__(self, eps: float = 1e-7) -> None:
         super().__init__()
         self.eps = eps
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        targets = prepare_binary_targets(targets)
         probs = torch.sigmoid(logits)
         probs = probs.flatten(start_dim=1)
         targets = targets.flatten(start_dim=1)
@@ -29,6 +37,7 @@ class BCEDiceLoss(nn.Module):
         self.dice_weight = dice_weight
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        targets = prepare_binary_targets(targets)
         return self.bce_weight * self.bce(logits, targets) + self.dice_weight * self.dice(logits, targets)
 
 
@@ -40,6 +49,7 @@ class TverskyLoss(nn.Module):
         self.eps = eps
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        targets = prepare_binary_targets(targets)
         probs = torch.sigmoid(logits).flatten(start_dim=1)
         targets = targets.flatten(start_dim=1)
 
@@ -57,6 +67,7 @@ class FocalLoss(nn.Module):
         self.gamma = gamma
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        targets = prepare_binary_targets(targets)
         bce = nn.functional.binary_cross_entropy_with_logits(logits, targets, reduction="none")
         probs = torch.sigmoid(logits)
         p_t = probs * targets + (1.0 - probs) * (1.0 - targets)
@@ -88,6 +99,7 @@ class CombinedSegmentationLoss(nn.Module):
         self.focal_weight = focal_weight
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        targets = prepare_binary_targets(targets)
         loss = logits.new_tensor(0.0)
         if self.bce_weight:
             loss = loss + self.bce_weight * self.bce(logits, targets)
