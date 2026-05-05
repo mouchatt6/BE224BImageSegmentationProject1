@@ -1,0 +1,149 @@
+\documentclass[10pt]{article}
+
+\usepackage[margin=0.42in]{geometry}
+\usepackage{times}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{url}
+\urlstyle{same}
+
+\setlength{\columnsep}{0.16in}
+\setlength{\parskip}{0.05em}
+\setlength{\parindent}{0.7em}
+\captionsetup{font=footnotesize,labelfont=bf}
+\setlength{\textfloatsep}{0.45em}
+\setlength{\floatsep}{0.35em}
+\setlength{\intextsep}{0.35em}
+\setlength{\abovedisplayskip}{0.25em}
+\setlength{\belowdisplayskip}{0.25em}
+\setlength{\emergencystretch}{2em}
+
+\title{\vspace{-2.0em}Needle Segmentation in Lung CT Images Using Classical Baselines, U-Net, and U-Net++}
+\author{Moulik Chatterjee\\BE 224B Image Segmentation Project}
+\date{}
+
+\begin{document}
+\twocolumn[
+\maketitle
+\vspace{-2.7em}
+\begin{abstract}
+\noindent This project studies needle segmentation in lung CT images using a progression from classical image-processing baselines to U-Net and U-Net++. The target structure is small, thin, and highly imbalanced relative to the image background, making raw pixel accuracy and calibration metrics insufficient by themselves. Classical percentile and Hough-style methods established an interpretable baseline, while U-Net improved localization after threshold and morphology tuning. The best observed U-Net sweep used threshold 0.68, minimum area 120, closing kernel size 7, and no dilation, reaching a validation Dice of 0.4556 and an $\alpha=0.50$ score of 0.4554. The report summarizes preprocessing, architecture, loss design, post-processing, quantitative validation metrics, and qualitative mask comparisons.
+\end{abstract}
+\vspace{0.6em}
+]
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.78\textwidth,height=0.27\textheight,keepaspectratio]{assets/mask_grid_4x4.png}
+\caption{Generated mask comparison across four held-out CT examples.}
+\label{fig:masks}
+\end{figure*}
+
+\section{Background and Motivation}
+Accurate localization of biopsy needles in computed tomography (CT) images is important for image-guided intervention, trajectory verification, and downstream procedural analysis. This project framed the task as binary semantic segmentation: each grayscale CT pixel was labeled as background or needle. The task differs from ordinary object segmentation because the clinically relevant structure is a line-like device rather than a compact organ. The target is thin, sparse, and often occupies less than one percent of the image; many training images also contain no visible needle, so the model must learn both localization and abstention.
+
+This design choice follows the broader medical-image segmentation literature. U-Net was originally proposed for biomedical segmentation with limited annotated data, using a contracting path for context, an expanding path for localization, and skip connections to preserve fine detail.\textsuperscript{1} Those properties match needle segmentation, where the model must reason about global thoracic anatomy while recovering a very narrow foreground. The project therefore progressed from interpretable classical baselines to a full-resolution U-Net and then to U-Net++. Classical methods established a reference score and exposed common false-positive structures. U-Net introduced learned spatial features and dense prediction. U-Net++ was explored because nested skip pathways can reduce the semantic gap between encoder and decoder features, a mechanism proposed for more accurate medical segmentation.\textsuperscript{4}
+
+The competition score is based on a hidden-alpha blend of Dice and sensitivity:
+\begin{equation}
+S_{\alpha} = \alpha \cdot \mathrm{Dice} + (1-\alpha)\cdot \mathrm{Sensitivity}.
+\end{equation}
+Because $\alpha$ is not fixed in the public instructions, experiments reported $\alpha \in \{0.25,0.50,0.75\}$.
+
+\section{Methodology}
+\subsection{Data Preprocessing}
+All images were loaded as single-channel grayscale arrays at their native $512 \times 512$ resolution. Masks were binarized to remove grayscale encoding artifacts and to align the target with a Bernoulli pixel model. Neural-model inputs were scaled to $[0,1]$ and normalized by image mean and standard deviation so that contrast differences across CT windows did not dominate optimization. The validation split was stratified by needle status, preserving both positive and empty masks in each partition. Training augmentation included flips, $90^\circ$ rotations, brightness/contrast jitter, and light Gaussian noise. These transforms were chosen because they preserve mask geometry while increasing robustness to acquisition angle and local contrast variation.
+
+\subsection{Feature Engineering}
+The neural models did not use hand-crafted pixel features; they learned multiscale filters directly from the CT slices. Feature engineering was still useful in the classical baseline and post-processing stages. Connected components were scored using area, mean intensity or probability, and elongation. These features encoded the prior that the target object is a single bright, elongated needle-like structure rather than a diffuse region. This step also provided an interpretable error analysis tool: false positives often came from ribs, table edges, or high-intensity line segments that satisfied some but not all of the needle-shape assumptions.
+
+\subsection{Model Architecture}
+The classical baseline used percentile thresholding, Otsu-style thresholding, and Hough-line detection with component filtering. The first learned model was a U-Net with four encoder and decoder stages, batch normalization, ReLU activations, max pooling, learned upsampling, and skip connections. The encoder compressed local image evidence into increasingly semantic features, while the decoder restored spatial resolution. Skip connections were critical because a needle can disappear after repeated pooling unless high-resolution edge information is carried forward.\textsuperscript{1}
+
+The final explored architecture was U-Net++, which adds dense nested skip pathways between encoder and decoder blocks. These redesigned skip pathways make encoder and decoder feature maps more semantically similar before fusion, simplifying optimization and improving medical segmentation.\textsuperscript{4} For this project, the expected benefit was not only a higher aggregate score, but also fewer broken needle fragments and better recovery of fine linear structures. Both neural models output a one-channel logit map converted to probabilities with a sigmoid.
+
+\subsection{Loss Function}
+The main neural loss combined binary cross entropy, Dice loss, and Tversky loss:
+\begin{equation}
+\mathcal{L}=0.4\mathcal{L}_{BCE}+0.4\mathcal{L}_{Dice}+0.2\mathcal{L}_{Tversky}.
+\end{equation}
+Binary cross entropy provided calibrated pixel-level supervision, while Dice loss optimized overlap under severe class imbalance. Tversky loss was included because medical segmentation often contains many more background pixels than lesion or device pixels; Tversky-style weighting can trade precision against recall by assigning different penalties to false positives and false negatives.\textsuperscript{2} In this project, the Tversky loss used false-positive and false-negative weights of 0.3 and 0.7, respectively:
+\begin{equation}
+T = \frac{TP+\epsilon}{TP+0.3FP+0.7FN+\epsilon}, \quad
+\mathcal{L}_{Tversky}=1-T.
+\end{equation}
+This weighting emphasized missed needle pixels while still penalizing false-positive regions.
+
+\subsection{Post-Processing}
+Raw probability maps were thresholded and then cleaned using connected components. The tuned parameters were threshold, minimum component area, closing kernel size, and dilation iterations. This was necessary because a small number of bright false-positive pixels could hurt the Kaggle mask even when the probability map was visually plausible. The best U-Net sweep observed in the project used threshold $0.68$, minimum area 120, closing kernel size 7, and no dilation. Dilation was avoided because it tended to reduce overlap by widening already thin predictions.
+
+\section{Experiment}
+\subsection{Dataset}
+The dataset contained 505 labeled training images and 127 held-out test images. Each image was a $512 \times 512$ grayscale CT slice. Among the training masks, 352 contained a needle and 153 were empty. The median positive foreground area was approximately 373 pixels, highlighting the severe imbalance between background and needle pixels.
+
+\subsection{Implementation Details}
+Experiments were run in Python using PyTorch, NumPy, pandas, OpenCV, scikit-learn, Matplotlib, and seaborn-style visualization. Kaggle training used NVIDIA T4 $\times$ 2 GPUs. U-Net was trained for 75 epochs with batch size 4 and base channels 64 in the most recent run. U-Net++ was implemented in a parallel module with the same loss family, with base channels reduced when memory required it.
+
+During training, error was monitored using validation loss, Dice, sensitivity, and the hidden-alpha composite score. Pixel-level log-loss and Brier calibration score were computed afterward from the available validation outputs:
+\begin{equation}
+\mathcal{L}_{log}=-\frac{1}{N}\sum_i y_i\log(p_i)+(1-y_i)\log(1-p_i),
+\end{equation}
+\begin{equation}
+\mathrm{Brier}=\frac{1}{N}\sum_i(p_i-y_i)^2.
+\end{equation}
+
+\subsection{Comparison Methods and Evaluation Metrics}
+Three model states were compared: the classical percentile baseline, a raw U-Net checkpoint/sweep result, and the tuned U-Net result. Evaluation used log-loss, Brier calibration, Dice, sensitivity, and $S_{\alpha}$ at $\alpha=0.25$, $0.50$, and $0.75$. The baseline Kaggle score was 0.298.
+
+\section{Results}
+\subsection{Qualitative Results}
+Figure~\ref{fig:masks} compares generated masks on four held-out test images chosen to show different CT appearances and prediction behaviors: a moderate positive case, a bright needle-like case, a case with classical false positives, and a high-intensity background structure. The percentile baseline produced larger foreground regions, while the Hough baseline was more selective but sometimes missed structure. The available U-Net test-mask run was conservative, producing few nonempty masks. This behavior is consistent with the validation sweeps: low thresholds caused false positives, whereas the best tuned U-Net result required a high threshold and aggressive component filtering.
+
+Across the grid, the baseline methods make complementary errors. Percentile thresholding is sensitive to any bright linear structure, including anatomy and scanner artifacts, while Hough-style filtering is more geometrically selective but can miss low-contrast needle fragments. The U-Net examples show the opposite failure mode: after conservative thresholding, false positives are reduced, but some true needles are suppressed. This supports using validation-time post-processing sweeps rather than selecting a threshold from probability maps alone.
+
+\subsection{Quantitative Results}
+Table~\ref{tab:metrics} summarizes performance and includes the metric visualization beneath the numeric values. The classical baseline had low log-loss and Brier score because the images are dominated by background pixels, but its Dice and sensitivity were near zero. Therefore, pixel-level calibration metrics alone were misleading. The tuned U-Net substantially improved Dice and sensitivity, reaching a balanced validation score of 0.4554 after threshold and morphology tuning.
+
+\begin{table}[!htbp]
+\centering
+\caption{Quantitative validation and Kaggle metrics.}
+\label{tab:metrics}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lcccccccc}
+\toprule
+Model & Log-loss $\downarrow$ & Brier $\downarrow$ & Dice $\uparrow$ & Sens. $\uparrow$ & $\alpha=.25$ $\uparrow$ & $\alpha=.50$ $\uparrow$ & $\alpha=.75$ $\uparrow$ & Kaggle \\
+\midrule
+Classical baseline & 0.0590 & 0.00366 & 0.0341 & 0.0333 & 0.0335 & 0.0337 & 0.0339 & 0.298 \\
+U-Net raw & 0.1003 & 0.00992 & 0.3069 & 0.3069 & 0.3069 & 0.3069 & 0.3069 & 0.413/0.296 \\
+U-Net tuned & 0.1003 & 0.00992 & 0.4556 & 0.4551 & 0.4553 & 0.4554 & 0.4555 & -- \\
+\bottomrule
+\end{tabular}
+}
+\vspace{0.45em}
+
+\includegraphics[width=\columnwidth,height=0.18\textheight,keepaspectratio]{assets/results_summary.png}
+\end{table}
+
+The table shows why the public score target could not be reached by threshold selection alone. Moving from the raw U-Net sweep to the tuned U-Net improved the validation score by roughly 0.15, but the remaining gap to 0.69 likely reflects model capacity, checkpoint selection, and empty-image handling rather than a single post-processing parameter. The plotted bars within Table~\ref{tab:metrics} separate overlap-based metrics from calibration metrics.
+
+\section{Discussion}
+The experiments show that classical image processing provides an interpretable but weak starting point for sparse needle segmentation. Its Kaggle score of 0.298 was only marginally above the baseline, and local Dice and sensitivity were near 0.03. U-Net improved segmentation quality substantially, supporting the value of encoder-decoder architectures for biomedical segmentation with limited labeled data.\textsuperscript{1} However, the gain only appeared after threshold and morphology tuning. The best observed U-Net validation configuration used a high threshold, large minimum component area, strong closing, and no dilation, suggesting that the probability maps were noisy or fragmented.
+
+The main limitation is that checkpoint selection and the final segmentation objective were not perfectly aligned during early training. Checkpoints were initially selected using raw validation behavior, while the best results came from post-processed predictions. Future work should save checkpoints by post-processed validation score, add an explicit empty-image gate, use test-time augmentation, and train multiple folds for ensembling. Further improvements may come from pretrained encoder U-Nets, attention U-Net, and U-Net++ deep supervision.\textsuperscript{4} A longer-term direction is transformer segmentation: Swin Transformer blocks have been used in medical image translation because shifted-window attention can model longer-range anatomical dependencies than local convolution alone.\textsuperscript{3} That same motivation applies here, where needle appearance is local but false-positive suppression depends on global CT context.
+
+The practical lesson is that the model should be optimized around the submission-time pipeline rather than the raw probability map. A validation Dice score computed before thresholding, component filtering, and closing does not fully predict Kaggle behavior. Future work should treat threshold, closing, and minimum area as part of checkpoint selection, add an image-level empty-case gate, and use fold ensembling or test-time flips to stabilize probability maps before connected-component filtering.
+
+\section*{References}
+\footnotesize
+\begin{enumerate}
+\item Ronneberger, O., Fischer, P., \& Brox, T. (2015). U-Net: Convolutional networks for biomedical image segmentation. In \textit{Medical Image Computing and Computer-Assisted Intervention -- MICCAI 2015} (pp. 234--241). Springer. \url{https://doi.org/10.1007/978-3-319-24574-4_28}
+\item Salehi, S. S. M., Erdogmus, D., \& Gholipour, A. (2017). Tversky loss function for image segmentation using 3D fully convolutional deep networks. In \textit{Machine Learning in Medical Imaging} (pp. 379--387). Springer. \url{https://doi.org/10.1007/978-3-319-67389-9_44}
+\item Yan, S., Wang, C., Chen, W., \& Lyu, J. (2022). Swin transformer-based GAN for multi-modal medical image translation. \textit{Frontiers in Oncology, 12}, 942511. \url{https://doi.org/10.3389/fonc.2022.942511}
+\item Zhou, Z., Siddiquee, M. M. R., Tajbakhsh, N., \& Liang, J. (2018). UNet++: A nested U-Net architecture for medical image segmentation. In \textit{Deep Learning in Medical Image Analysis and Multimodal Learning for Clinical Decision Support} (pp. 3--11). Springer. \url{https://doi.org/10.1007/978-3-030-00889-5_1}
+\end{enumerate}
+
+\end{document}
